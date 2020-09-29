@@ -77,8 +77,11 @@ class SocketWrapper:
         self._socket_timeout = socket_timeout
         self._socket = await socket_factory(**kwargs)
 
-    async def aclose(self):
-        await self._socket.close()
+    async def aclose(self, force=False):
+        if force:
+            await anyio.aclose_forcefully(self._socket)
+        else:
+            await self._socket.close()
 
     async def send(self, data):
         if self._socket_timeout:

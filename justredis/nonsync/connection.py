@@ -4,7 +4,6 @@ from ..encoder import RedisRespEncoder
 from ..errors import CommunicationError, PipelinedExceptions
 from ..utils import get_command_name, is_multiple_commands
 
-
 # TODO (correctness) watch for manual SELECT and set_database !
 
 
@@ -89,10 +88,10 @@ class Connection:
         if database != 0:
             await self._command(b"SELECT", database)
 
-    async def aclose(self):
+    async def aclose(self, force=False):
         if self._socket:
             try:
-                await self._socket.aclose()
+                await self._socket.aclose(force)
             except Exception:
                 pass
             self._socket = None
@@ -120,8 +119,11 @@ class Connection:
         except ValueError as e:
             raise
         except Exception as e:
-            await self.aclose()
+            await self.aclose(True)
             raise CommunicationError("I/O error while trying to send a command") from e
+        except BaseException:
+            await self.aclose(True)
+            raise
 
     # TODO (misc) should a decoding error be considered an CommunicationError ?
     async def _recv(self, timeout=False):
@@ -139,12 +141,18 @@ class Connection:
                         elif data is None:
                             return timeout_error
                         else:
+                            # TODO This check if because another context can close us while we were reading (we can instead simply not remove self._decoder on close)
+                            if not self._decoder:
+                                raise Exception("Connection already closed")
                             self._decoder.feed(data)
                     continue
                 return res
         except Exception as e:
-            await self.aclose()
+            await self.aclose(True)
             raise CommunicationError("Error while trying to read a reply") from e
+        except BaseException:
+            await self.aclose(True)
+            raise
 
     async def pushed_message(self, timeout=False, decoder=False, attributes=None):
         orig_decoder = None
@@ -216,7 +224,7 @@ class Connection:
                 self._seen_ask = address
             raise res
         if res == timeout_error:
-            await self.aclose()
+            await self.aclose(True)
             raise timeout_error
         return res
 
@@ -238,7 +246,7 @@ class Connection:
                         self.seen_moved = True
                     found_errors = True
                 if result == timeout_error:
-                    await self.aclose()
+                    await self.aclose(True)
             except Exception as e:
                 result = e
                 found_errors = True
